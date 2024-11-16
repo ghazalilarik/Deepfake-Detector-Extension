@@ -1,0 +1,149 @@
+{
+  "manifest_version": 2,
+  "name": "Deepfake Detector Extension",
+  "version": "1.0",
+  "description": "A browser extension that helps users detect deepfake videos by analyzing content and providing an authenticity score.",
+  "permissions": ["activeTab", "webRequest", "webRequestBlocking", "storage"],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "48": "icon.png"
+  }
+}
+
+---
+
+// content.js
+(function() {
+  document.addEventListener("play", async function(event) {
+    if (event.target.tagName === "VIDEO") {
+      const videoElement = event.target;
+      videoElement.addEventListener("playing", function() {
+        analyzeVideo(videoElement);
+      });
+    }
+  }, true);
+
+  async function analyzeVideo(video) {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const imageData = canvas.toDataURL("image/jpeg");
+    const result = await fetchDeepfakeAnalysis(imageData);
+
+    if (result) {
+      displayAuthenticityScore(result.score);
+    }
+  }
+
+  async function fetchDeepfakeAnalysis(imageData) {
+    try {
+      const response = await fetch("http://localhost:5000/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ image: imageData })
+      });
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error("Error analyzing video: ", error);
+      return null;
+    }
+  }
+
+  function displayAuthenticityScore(score) {
+    const message = score < 50 ? "Warning: This video may be a deepfake." : "Authenticity score is high.";
+    const alertBox = document.createElement("div");
+    alertBox.style.position = "fixed";
+    alertBox.style.bottom = "10px";
+    alertBox.style.right = "10px";
+    alertBox.style.padding = "10px";
+    alertBox.style.backgroundColor = score < 50 ? "#ff4d4d" : "#4caf50";
+    alertBox.style.color = "white";
+    alertBox.style.fontSize = "16px";
+    alertBox.style.zIndex = "10000";
+    alertBox.innerText = `Authenticity Score: ${score} - ${message}`;
+    document.body.appendChild(alertBox);
+
+    setTimeout(() => {
+      document.body.removeChild(alertBox);
+    }, 5000);
+  }
+})();
+
+---
+
+// background.js
+chrome.webRequest.onCompleted.addListener(
+  function(details) {
+    if (details.url.includes(".mp4") || details.url.includes(".webm")) {
+      chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "videoLoaded", url: details.url });
+      });
+    }
+  },
+  { urls: ["<all_urls>"] }
+);
+
+---
+
+// popup.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Deepfake Detector</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        width: 300px;
+        text-align: center;
+      }
+      #scan-btn {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Deepfake Detector</h3>
+    <button id="scan-btn">Analyze Current Video</button>
+    <div id="result"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
+
+---
+
+// popup.js
+document.getElementById("scan-btn").addEventListener("click", () => {
+  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+    chrome.tabs.sendMessage(tabs[0].id, { action: "manualScan" });
+  });
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.result) {
+    document.getElementById("result").innerText = `Authenticity Score: ${request.result.score}`;
+  }
+});
